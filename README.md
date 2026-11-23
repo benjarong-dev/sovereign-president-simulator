@@ -1,73 +1,52 @@
-# SOVEREIGN V8.0 - 3D Political & Economic City Simulator
+# Civic & Fiscal Policy Sandbox (3D Web Simulation)
 
-A zero-dependency, single-page 3D macroeconomic simulation framework built with vanilla HTML5, CSS3, JavaScript, and Three.js. This application models the systemic interactions and trade-offs between urban zoning, fiscal policy decisions, populism-driven monetary inflation, and regime approval dynamics.
+Interactive client-side simulation exploring the macroeconomic and urban-planning trade-offs between taxation, public stimulus, infrastructure investment, and public approval. Built with native **ES Modules** and **Three.js (v0.170.0)** with zero build-tool overhead, combining public-policy concepts with deterministic state modeling.
 
----
+- **Live Browser Sandbox:** https://benjarong-dev.github.io/sovereign-president-simulator/
 
-## 🏗️ System Architecture
+## Module Architecture
 
-```mermaid
-graph TD
-    A[User Controls / Policy UI] -->|Direct Event Handlers| B[Macroeconomic State Engine]
-    
-    subgraph Engine Core
-        B -->|Build Actions| C[Urban Mesh Generator]
-        B -->|Policy Enactments| D[Fiscal & Inflation Calculator]
-        E[3000ms Loop Tick] -->|Revenue: pop * 1.5| B
-        E -->|Threshold Checker| F{Crisis Check}
-    end
-
-    C -->|Dynamic Box Geometry| G[Three.js 3D WebGL Scene]
-    D -->|State Mutation| H[DOM UI Dashboard]
-    F -->|Inflation > 10%| I[Approval Degradation]
-    F -->|Approval <= 0%| J[Regime Collapse Trigger]
+```text
+sovereign-president-simulator/
+├── index.html                        # Semantic HTML5 shell & ES Import Map
+├── css/
+│   └── styles.css                    # Responsive dark telemetry UI layout
+├── src/
+│   ├── main.js                       # DOM event bindings & simulation loop controller
+│   ├── simulation/
+│   │   └── policyEngine.js           # Pure deterministic fiscal & zoning state engine
+│   └── render/
+│       └── cityScene.js              # Three.js v0.170 WebGL grid & OrbitControls scene
+└── tests/
+    └── policyEngine.test.mjs         # Zero-dependency Node.js unit test suite
 ```
 
----
+## Policy & Economic Model Mechanics
 
-## ✨ Key Features & Simulation Mechanics
+Rather than relying on random number generation, every quarterly tick computes state transitions deterministically from explicit policy levers:
 
-* **Zero-Build WebGL Architecture:** Pure single-file client-side rendering powered by Three.js (`r128`), featuring dynamic lighting, volumetric fog (`FogExp2`), procedural grid generation, and a cinematic rotating orbital camera projection.
-* **Deterministic Economic State Engine:** Tracks core macroeconomic indicators in real time:
-  * **Budget ($):** Starting capital used for public infrastructure and policy funding.
-  * **Approval (%):** Public trust index determining political survival.
-  * **Inflation (%):** Monetary instability rate impacting overall governance.
-  * **Population:** Taxpayer base directly driving automated revenue generation.
-* **Urban Zoning & Infrastructure Options:**
-  * **Residential District:** Costs **$5,000** | Increases Population by **+250** | Spawns cyan-coded 3D building mesh (`0x00d2ff`).
-  * **Industrial District:** Costs **$8,000** | Increases Population by **+100** and expands long-term tax base | Spawns amber-coded 3D building mesh (`0xffaa00`).
-* **Fiscal & Public Policy Frameworks:**
-  * **Populism Policy (`populism`):** Grants an immediate **+$10,000** budget injection and **+8.0%** Approval rating, at the cost of spiking Inflation by **+4.5%**.
-  * **Human Capital Investment (`education`):** Costs **$6,000** | Cools Inflation by **-0.8%** and stabilizes public Approval by **+4.0%**.
-* **Automated Macro Economic Loop (3000ms Tick):**
-  * Calculates tax income based on current population: $\text{Income} = \lfloor \text{Population} \times 1.5 \rfloor$.
-  * Triggers civil unrest warnings when Inflation exceeds **10.0%**.
-  * Executes regime collapse state when Approval reaches **0%**.
+| Policy Lever / Action | Immediate Fiscal Impact | Macroeconomic & Approval Trade-Off |
+|---|---|---|
+| **Tax Rate Adjustment (`10%` – `45%`)** | Scales quarterly tax revenue collected from active GDP | Rates above `28%` dampen private industrial output and reduce approval; overly low rates risk structural deficits |
+| **Residential Zoning (`+1 District`)** | Costs `$45M` capital outlay | Expands labor capacity and population growth; requires matching industrial jobs to prevent unemployment spikes |
+| **Industrial Zoning (`+1 District`)** | Costs `$70M` capital outlay | Raises base GDP output and job creation, but increases urban congestion/inflation pressure without civic infrastructure |
+| **Civic Infrastructure (`+1 Plaza/Transit`)** | Costs `$60M` capital outlay | Boosts productivity multiplier, dampens inflation friction, and improves long-term public approval |
+| **Targeted Fiscal Stimulus (`$50M`)** | Immediate `$50M` treasury draw | Provides short-term approval and demand relief during downturns, while nudging quarterly inflation upward |
 
----
+## Local Development & Verification
 
-## ⚙️ Prerequisites & Setup Guide
+Because the project uses standard browser ES Modules and Node's built-in test runner (`node:test`), no `npm install` step is required.
 
-### System Requirements
-* Any modern web browser supporting **WebGL** (Google Chrome, Mozilla Firefox, Microsoft Edge, or WebKit-based browsers).
-* No build tools, Node.js runtime, or `npm` package installations required.
+```bash
+# 1. Clone repository
+git clone https://github.com/benjarong-dev/sovereign-president-simulator.git
+cd sovereign-president-simulator
 
-### Local Execution
+# 2. Run deterministic policy-engine unit tests (Node.js 18+)
+node --test tests/policyEngine.test.mjs
 
-1. **Clone the repository:**
-   ```bash
-   git clone [https://github.com/Dmitrizakanilov279/sovereign-president-simulator.git](https://github.com/Dmitrizakanilov279/sovereign-president-simulator.git)
-   cd sovereign-president-simulator
-   ```
+# 3. Serve locally over HTTP for ES Module imports
+python3 -m http.server 8080
+# Open http://localhost:8080 in browser
+```
 
-2. **Run a local static HTTP server (Python 3):**
-   ```bash
-   python3 -m http.server 8000
-   ```
-
-3. **Access the application:**
-   Open browser at `http://localhost:8000` or open `index.html` directly.
-
----
-
-## 📊
