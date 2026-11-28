@@ -1,400 +1,541 @@
-/**
- * Resilient Urban Grid Renderer (Isometric Canvas + Async Three.js WebGL Upgrade)
- * Renders immediately with zero CDN wait; gracefully handles WebGL-disabled browsers (e.g., LibreWolf).
- */
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GRID_SIZE, getRoadNetwork, inBounds } from "../simulation/policyEngine.js";
 
-const GRID_SIZE = 8;
+const COLORS = {
+  GROUND_A: 0x1e293b,
+  GROUND_B: 0x243247,
+  ROAD: 0x334155,
+  RESIDENTIAL: 0x22c55e,
+  COMMERCIAL: 0x3b82f6,
+  INDUSTRIAL: 0xf59e0b,
+  WIND_TURBINE: 0xe2e8f0,
+  WATER_TOWER: 0x38bdf8,
+  PARK: 0x16a34a,
+  SCHOOL: 0xa855f7,
+  HOSPITAL: 0xef4444,
+  WARN: 0xef4444,
+};
 
-function drawIsoPrism(ctx, cx, cy, halfW, halfH, height, colors) {
-  // Top face
-  ctx.beginPath();
-  ctx.moveTo(cx, cy - halfH - height);
-  ctx.lineTo(cx + halfW, cy - height);
-  ctx.lineTo(cx, cy + halfH - height);
-  ctx.lineTo(cx - halfW, cy - height);
-  ctx.closePath();
-  ctx.fillStyle = colors.top;
-  ctx.fill();
-  ctx.strokeStyle = colors.stroke || 'rgba(15, 23, 42, 0.45)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-
-  if (height <= 0) return;
-
-  // Left face
-  ctx.beginPath();
-  ctx.moveTo(cx - halfW, cy - height);
-  ctx.lineTo(cx, cy + halfH - height);
-  ctx.lineTo(cx, cy + halfH);
-  ctx.lineTo(cx - halfW, cy);
-  ctx.closePath();
-  ctx.fillStyle = colors.left;
-  ctx.fill();
-  ctx.stroke();
-
-  // Right face
-  ctx.beginPath();
-  ctx.moveTo(cx + halfW, cy - height);
-  ctx.lineTo(cx, cy + halfH - height);
-  ctx.lineTo(cx, cy + halfH);
-  ctx.lineTo(cx + halfW, cy);
-  ctx.closePath();
-  ctx.fillStyle = colors.right;
-  ctx.fill();
-  ctx.stroke();
+function hexCss(num) {
+  return `#${num.toString(16).padStart(6, "0")}`;
 }
 
-function createIsometricCanvasBackend(container) {
-  const canvas = document.createElement('canvas');
-  canvas.style.width = '100%';
-  canvas.style.height = '100%';
-  canvas.style.display = 'block';
-  canvas.style.cursor = 'grab';
-  container.appendChild(canvas);
+function overlayColorHex(tile, overlayMode) {
+  if (overlayMode === "POLLUTION") {
+    const p = tile.pollution / 100;
+    const r = Math.round(40 + p * 215);
+    const g = Math.round(190 - p * 150);
+    return (r << 16) | (g << 8) | 60;
+  }
+  if (overlayMode === "HAPPINESS") {
+    const h = (tile.happiness ?? 75) / 100;
+    const r = Math.round(230 - h * 190);
+    const g = Math.round(50 + h * 185);
+    return (r << 16) | (g << 8) | 90;
+  }
+  return null;
+}
 
-  const ctx = canvas.getContext('2d');
-  let panX = 0;
-  let panY = 24;
-  let zoom = 1.0;
-  let dragging = false;
-  let lastX = 0;
-  let lastY = 0;
+export function createCityScene(container, { onTileAction, onTileHover } = {}) {
   let currentState = null;
+  let overlayMode = "NONE";
+  let hoverCoord = null;
+  let isPointerDown = false;
+  let lastPaintedKey = "";
+  const cars = [];
+  let roadCache = [];
 
-  function render() {
-    const width = container.clientWidth || window.innerWidth;
-    const height = container.clientHeight || window.innerHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function syncVehicles(state) {
+    roadCache = getRoadNetwork(state);
+    const targetCars = roadCache.length === 0
+      ? 0
+      : Math.min(18, Math.max(2, Math.floor((state.metrics.population + state.metrics.totalJobs) / 35)));
 
-    if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-      canvas.width = Math.floor(width * dpr);
-      canvas.height = Math.floor(height * dpr);
+    while (cars.length > targetCars) cars.pop();
+    while (cars.length < targetCars && roadCache.length > 0) {
+      const startNode = roadCache[cars.length % roadCache.length];
+      const nextNode = startNode.neighbors[0] ?? startNode;
+      cars.push({
+        fromX: startNode.x,
+        fromY: startNode.y,
+        toX: nextNode.x,
+        toY: nextNode.y,
+        t: (cars.length * 0.27) % 1,
+        color: cars.length % 2 === 0 ? 0xfef08a : 0x38bdf8,
+      });
     }
+  }
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#0b1120';
-    ctx.fillRect(0, 0, width, height);
+  function advanceVehicles(dt) {
+    if (roadCache.length === 0) return;
+    const roadMap = new Map(roadCache.map((r) => [`${r.x},${r.y}`, r]));
 
-    const tileW = 64 * zoom;
-    const tileH = 32 * zoom;
-    const originX = (width / 2) + panX;
-    const originY = (height / 2) - (GRID_SIZE * tileH * 0.38) + panY;
-
-    const districtBySlot = new Map();
-    if (currentState && Array.isArray(currentState.districts)) {
-      for (const d of currentState.districts) {
-        districtBySlot.set(d.slotIndex, d);
-      }
-    }
-
-    // Back-to-front painter's order across 8x8 isometric grid
-    for (let row = 0; row < GRID_SIZE; row += 1) {
-      for (let col = 0; col < GRID_SIZE; col += 1) {
-        const slotIndex = (row * GRID_SIZE) + col;
-        const cx = originX + ((col - row) * (tileW / 2));
-        const cy = originY + ((col + row) * (tileH / 2));
-
-        // Base parcel pad
-        drawIsoPrism(ctx, cx, cy, (tileW * 0.46), (tileH * 0.46), 5 * zoom, {
-          top: '#162032',
-          left: '#0f172a',
-          right: '#1e293b',
-          stroke: 'rgba(56, 189, 248, 0.18)',
-        });
-
-        const district = districtBySlot.get(slotIndex);
-        if (!district) continue;
-
-        const baseY = cy - (5 * zoom);
-        if (district.type === 'residential') {
-          drawIsoPrism(ctx, cx, baseY, tileW * 0.36, tileH * 0.36, 7 * zoom, {
-            top: '#0284c7',
-            left: '#0369a1',
-            right: '#075985',
-          });
-          drawIsoPrism(ctx, cx - (tileW * 0.1), baseY - (7 * zoom), tileW * 0.16, tileH * 0.16, 36 * zoom, {
-            top: '#7dd3fc',
-            left: '#38bdf8',
-            right: '#0284c7',
-          });
-          drawIsoPrism(ctx, cx + (tileW * 0.12), baseY - (5 * zoom), tileW * 0.14, tileH * 0.14, 24 * zoom, {
-            top: '#bae6fd',
-            left: '#38bdf8',
-            right: '#0369a1',
-          });
-        } else if (district.type === 'industrial') {
-          drawIsoPrism(ctx, cx, baseY, tileW * 0.36, tileH * 0.36, 18 * zoom, {
-            top: '#fbbf24',
-            left: '#f59e0b',
-            right: '#b45309',
-          });
-          drawIsoPrism(ctx, cx - (tileW * 0.12), baseY - (18 * zoom), tileW * 0.08, tileH * 0.08, 22 * zoom, {
-            top: '#fde68a',
-            left: '#d97706',
-            right: '#78350f',
-          });
+    for (const car of cars) {
+      car.t += dt * 1.6;
+      if (car.t >= 1) {
+        car.t = 0;
+        const arrived = roadMap.get(`${car.toX},${car.toY}`);
+        if (!arrived || arrived.neighbors.length === 0) {
+          const fallback = roadCache[0];
+          car.fromX = fallback.x;
+          car.fromY = fallback.y;
+          car.toX = fallback.neighbors[0]?.x ?? fallback.x;
+          car.toY = fallback.neighbors[0]?.y ?? fallback.y;
         } else {
-          drawIsoPrism(ctx, cx, baseY, tileW * 0.38, tileH * 0.38, 6 * zoom, {
-            top: '#10b981',
-            left: '#059669',
-            right: '#047857',
-          });
-          drawIsoPrism(ctx, cx, baseY - (6 * zoom), tileW * 0.12, tileH * 0.12, 42 * zoom, {
-            top: '#6ee7b7',
-            left: '#34d399',
-            right: '#059669',
-          });
+          const forward = arrived.neighbors.filter(
+            (n) => !(n.x === car.fromX && n.y === car.fromY)
+          );
+          const choices = forward.length > 0 ? forward : arrived.neighbors;
+          const pick = choices[(car.fromX + car.fromY + Math.floor(performance.now())) % choices.length];
+          car.fromX = arrived.x;
+          car.fromY = arrived.y;
+          car.toX = pick.x;
+          car.toY = pick.y;
         }
       }
     }
   }
 
-  const onPointerDown = (e) => {
-    dragging = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    canvas.style.cursor = 'grabbing';
-  };
-  const onPointerMove = (e) => {
-    if (!dragging) return;
-    panX += e.clientX - lastX;
-    panY += e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    render();
-  };
-  const onPointerUp = () => {
-    dragging = false;
-    canvas.style.cursor = 'grab';
-  };
-  const onWheel = (e) => {
-    e.preventDefault();
-    const factor = e.deltaY < 0 ? 1.08 : 0.92;
-    zoom = Math.min(1.85, Math.max(0.6, zoom * factor));
-    render();
-  };
+  // Attempt WebGL 3D Renderer first; fall back cleanly to Interactive 2D Isometric Canvas
+  let glRenderer = null;
+  try {
+    glRenderer = new THREE.WebGLRenderer({ antialias: true });
+  } catch {
+    glRenderer = null;
+  }
 
-  canvas.addEventListener('pointerdown', onPointerDown);
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerup', onPointerUp);
-  canvas.addEventListener('wheel', onWheel, { passive: false });
+  if (glRenderer) {
+    return initWebGLScene(container, glRenderer, {
+      getState: () => currentState,
+      setState: (s) => {
+        currentState = s;
+        syncVehicles(s);
+      },
+      getOverlay: () => overlayMode,
+      setOverlay: (m) => { overlayMode = m; },
+      getHover: () => hoverCoord,
+      setHover: (h) => { hoverCoord = h; },
+      isDragging: () => isPointerDown,
+      setDragging: (v) => { isPointerDown = v; },
+      getLastKey: () => lastPaintedKey,
+      setLastKey: (k) => { lastPaintedKey = k; },
+      cars,
+      advanceVehicles,
+      onTileAction,
+      onTileHover,
+    });
+  }
 
-  const resizeObserver = new ResizeObserver(() => render());
-  resizeObserver.observe(container);
-
-  return {
-    syncState(state) {
-      currentState = state;
-      render();
+  return initIsometric2DScene(container, {
+    getState: () => currentState,
+    setState: (s) => {
+      currentState = s;
+      syncVehicles(s);
     },
-    resetCamera() {
-      panX = 0;
-      panY = 24;
-      zoom = 1.0;
-      render();
-    },
-    dispose() {
-      resizeObserver.disconnect();
-      canvas.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-      canvas.removeEventListener('wheel', onWheel);
-      if (canvas.parentNode === container) {
-        container.removeChild(canvas);
-      }
-    },
-  };
+    getOverlay: () => overlayMode,
+    setOverlay: (m) => { overlayMode = m; },
+    getHover: () => hoverCoord,
+    setHover: (h) => { hoverCoord = h; },
+    isDragging: () => isPointerDown,
+    setDragging: (v) => { isPointerDown = v; },
+    getLastKey: () => lastPaintedKey,
+    setLastKey: (k) => { lastPaintedKey = k; },
+    cars,
+    advanceVehicles,
+    onTileAction,
+    onTileHover,
+  });
 }
 
-function createWebGLBackend(container, THREE, OrbitControls) {
-  const TILE_SIZE = 2.2;
-  const STEP = 2.45;
-  const BOARD_OFFSET = ((GRID_SIZE - 1) * STEP) / 2;
-
-  const width = container.clientWidth || window.innerWidth;
-  const height = container.clientHeight || window.innerHeight;
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+function initWebGLScene(container, renderer, ctx) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(width, height);
-  renderer.shadowMap.enabled = true;
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0b1120);
-  scene.fog = new THREE.FogExp2(0x0b1120, 0.022);
 
-  const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 120);
-  camera.position.set(16.5, 15.5, 18.5);
-
-  container.appendChild(renderer.domElement);
+  const camera = new THREE.PerspectiveCamera(
+    42,
+    container.clientWidth / Math.max(1, container.clientHeight),
+    0.1,
+    200
+  );
+  camera.position.set(14, 16, 16);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
+  controls.target.set(0, 0, 0);
   controls.maxPolarAngle = Math.PI / 2.15;
-  controls.minDistance = 9;
+  controls.minDistance = 7;
   controls.maxDistance = 36;
-  controls.target.set(0, 0.5, 0);
+  controls.mouseButtons = {
+    LEFT: null,
+    MIDDLE: THREE.MOUSE.DOLLY,
+    RIGHT: THREE.MOUSE.ROTATE,
+  };
 
-  const ambientLight = new THREE.AmbientLight(0x94a3b8, 0.9);
-  scene.add(ambientLight);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.15);
+  sun.position.set(12, 22, 10);
+  scene.add(sun);
 
-  const keyLight = new THREE.DirectionalLight(0xf8fafc, 1.65);
-  keyLight.position.set(14, 22, 12);
-  keyLight.castShadow = true;
-  scene.add(keyLight);
+  const offset = (GRID_SIZE - 1) / 2;
+  const tileMeshes = [];
+  const propsGroup = new THREE.Group();
+  const carsGroup = new THREE.Group();
+  const rotors = [];
+  scene.add(propsGroup);
+  scene.add(carsGroup);
 
-  const padGeo = new THREE.BoxGeometry(TILE_SIZE, 0.16, TILE_SIZE);
-  const padMat = new THREE.MeshStandardMaterial({ color: 0x162032, roughness: 0.88 });
-
-  const slotPos = (idx) => ({
-    x: ((idx % GRID_SIZE) * STEP) - BOARD_OFFSET,
-    z: (Math.floor(idx / GRID_SIZE) * STEP) - BOARD_OFFSET,
-  });
-
-  for (let i = 0; i < GRID_SIZE * GRID_SIZE; i += 1) {
-    const pad = new THREE.Mesh(padGeo, padMat);
-    const p = slotPos(i);
-    pad.position.set(p.x, -0.08, p.z);
-    pad.receiveShadow = true;
-    scene.add(pad);
+  const baseGeo = new THREE.BoxGeometry(0.96, 0.14, 0.96);
+  for (let y = 0; y < GRID_SIZE; y += 1) {
+    for (let x = 0; x < GRID_SIZE; x += 1) {
+      const mat = new THREE.MeshStandardMaterial({
+        color: (x + y) % 2 === 0 ? COLORS.GROUND_A : COLORS.GROUND_B,
+      });
+      const mesh = new THREE.Mesh(baseGeo, mat);
+      mesh.position.set(x - offset, -0.07, y - offset);
+      mesh.userData = { gridX: x, gridY: y };
+      scene.add(mesh);
+      tileMeshes.push(mesh);
+    }
   }
 
-  const districtsRoot = new THREE.Group();
-  scene.add(districtsRoot);
-  const renderedMap = new Map();
+  const cursorGeo = new THREE.RingGeometry(0.36, 0.46, 4);
+  cursorGeo.rotateX(-Math.PI / 2);
+  cursorGeo.rotateY(Math.PI / 4);
+  const cursorMesh = new THREE.Mesh(
+    cursorGeo,
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide })
+  );
+  cursorMesh.position.y = 0.03;
+  cursorMesh.visible = false;
+  scene.add(cursorMesh);
 
-  const buildMesh = (type) => {
-    const group = new THREE.Group();
-    if (type === 'residential') {
-      const a = new THREE.Mesh(
-        new THREE.BoxGeometry(0.7, 1.85, 0.7),
-        new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.35 })
-      );
-      a.position.set(-0.32, 0.95, -0.2);
-      const b = new THREE.Mesh(
-        new THREE.BoxGeometry(0.62, 1.3, 0.62),
-        new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.45 })
-      );
-      b.position.set(0.35, 0.68, 0.25);
-      group.add(a, b);
-    } else if (type === 'industrial') {
-      const hall = new THREE.Mesh(
-        new THREE.BoxGeometry(1.55, 0.85, 1.15),
-        new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.48 })
-      );
-      hall.position.set(0, 0.43, 0.16);
-      const stack = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.15, 0.2, 1.55, 12),
-        new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.55 })
-      );
-      stack.position.set(-0.42, 0.78, -0.42);
-      group.add(hall, stack);
-    } else {
-      const park = new THREE.Mesh(
-        new THREE.BoxGeometry(1.8, 0.18, 1.8),
-        new THREE.MeshStandardMaterial({ color: 0x059669, roughness: 0.75 })
-      );
-      park.position.y = 0.09;
-      const spire = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.36, 2.05, 6),
-        new THREE.MeshStandardMaterial({ color: 0x34d399, roughness: 0.25 })
-      );
-      spire.position.y = 1.1;
-      group.add(park, spire);
+  const raycaster = new THREE.Raycaster();
+  const pointer = new THREE.Vector2();
+
+  function pickTile(clientX, clientY) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+    const hits = raycaster.intersectObjects(tileMeshes, false);
+    return hits.length > 0 ? hits[0].object.userData : null;
+  }
+
+  renderer.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  renderer.domElement.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    ctx.setDragging(true);
+    const hit = pickTile(e.clientX, e.clientY);
+    if (hit) {
+      const key = `${hit.gridX},${hit.gridY}`;
+      ctx.setLastKey(key);
+      ctx.onTileAction?.(hit.gridX, hit.gridY);
     }
-    return group;
-  };
-
-  let frameId = null;
-  const animate = () => {
-    frameId = window.requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-  };
-  animate();
-
-  const resizeObserver = new ResizeObserver(() => {
-    const w = container.clientWidth || window.innerWidth;
-    const h = container.clientHeight || window.innerHeight;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    renderer.setSize(w, h);
   });
-  resizeObserver.observe(container);
 
-  return {
-    syncState(state) {
-      if (!state) return;
-      if (state.districts.length < renderedMap.size) {
-        for (const m of renderedMap.values()) districtsRoot.remove(m);
-        renderedMap.clear();
-      }
-      for (const d of state.districts) {
-        if (!renderedMap.has(d.id)) {
-          const mesh = buildMesh(d.type);
-          const p = slotPos(d.slotIndex);
-          mesh.position.set(p.x, 0, p.z);
-          districtsRoot.add(mesh);
-          renderedMap.set(d.id, mesh);
+  renderer.domElement.addEventListener("pointermove", (e) => {
+    const hit = pickTile(e.clientX, e.clientY);
+    ctx.setHover(hit);
+    if (hit) {
+      cursorMesh.visible = true;
+      cursorMesh.position.x = hit.gridX - offset;
+      cursorMesh.position.z = hit.gridY - offset;
+      ctx.onTileHover?.(hit.gridX, hit.gridY);
+      if (ctx.isDragging()) {
+        const key = `${hit.gridX},${hit.gridY}`;
+        if (key !== ctx.getLastKey()) {
+          ctx.setLastKey(key);
+          ctx.onTileAction?.(hit.gridX, hit.gridY);
         }
       }
+    } else {
+      cursorMesh.visible = false;
+    }
+  });
+
+  window.addEventListener("pointerup", () => {
+    ctx.setDragging(false);
+    ctx.setLastKey("");
+  });
+
+  window.addEventListener("resize", () => {
+    camera.aspect = container.clientWidth / Math.max(1, container.clientHeight);
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+  });
+
+  function rebuildMeshes() {
+    const state = ctx.getState();
+    if (!state) return;
+
+    while (propsGroup.children.length > 0) propsGroup.remove(propsGroup.children[0]);
+    rotors.length = 0;
+
+    for (const mesh of tileMeshes) {
+      const { gridX: x, gridY: y } = mesh.userData;
+      const tile = state.grid[y][x];
+      const ov = overlayColorHex(tile, ctx.getOverlay());
+
+      if (ov !== null && tile.type !== "EMPTY") {
+        mesh.material.color.setHex(ov);
+      } else if (tile.type === "ROAD") {
+        mesh.material.color.setHex(COLORS.ROAD);
+      } else if (tile.type === "PARK") {
+        mesh.material.color.setHex(COLORS.PARK);
+      } else {
+        mesh.material.color.setHex((x + y) % 2 === 0 ? COLORS.GROUND_A : COLORS.GROUND_B);
+      }
+
+      if (tile.type === "EMPTY" || tile.type === "ROAD") continue;
+
+      const wx = x - offset;
+      const wz = y - offset;
+
+      if (tile.type === "WIND_TURBINE") {
+        const mast = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.06, 0.1, 1.35, 8),
+          new THREE.MeshStandardMaterial({ color: COLORS.WIND_TURBINE })
+        );
+        mast.position.set(wx, 0.67, wz);
+        propsGroup.add(mast);
+
+        const blades = new THREE.Mesh(
+          new THREE.BoxGeometry(0.85, 0.06, 0.04),
+          new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
+        );
+        blades.position.set(wx, 1.3, wz + 0.08);
+        propsGroup.add(blades);
+        rotors.push(blades);
+      } else if (tile.type === "WATER_TOWER") {
+        const tank = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.28, 0.22, 0.9, 12),
+          new THREE.MeshStandardMaterial({ color: COLORS.WATER_TOWER })
+        );
+        tank.position.set(wx, 0.45, wz);
+        propsGroup.add(tank);
+      } else if (tile.type === "PARK") {
+        const tree = new THREE.Mesh(
+          new THREE.ConeGeometry(0.28, 0.65, 7),
+          new THREE.MeshStandardMaterial({ color: 0x4ade80 })
+        );
+        tree.position.set(wx, 0.33, wz);
+        propsGroup.add(tree);
+      } else {
+        const height =
+          tile.type === "SCHOOL" || tile.type === "HOSPITAL"
+            ? 0.85
+            : tile.level === 0
+              ? 0.12
+              : 0.35 + tile.level * 0.48;
+        const bldg = new THREE.Mesh(
+          new THREE.BoxGeometry(0.72, height, 0.72),
+          new THREE.MeshStandardMaterial({ color: COLORS[tile.type] ?? 0x94a3b8 })
+        );
+        bldg.position.set(wx, height / 2, wz);
+        propsGroup.add(bldg);
+
+        if (tile.issue) {
+          const beacon = new THREE.Mesh(
+            new THREE.SphereGeometry(0.13, 8, 8),
+            new THREE.MeshBasicMaterial({ color: COLORS.WARN })
+          );
+          beacon.position.set(wx, height + 0.24, wz);
+          propsGroup.add(beacon);
+        }
+      }
+    }
+  }
+
+  let lastTs = performance.now();
+  function animate(now) {
+    requestAnimationFrame(animate);
+    const dt = Math.min(0.05, (now - lastTs) / 1000);
+    lastTs = now;
+
+    ctx.advanceVehicles(dt);
+    for (const r of rotors) r.rotation.z += dt * 4.2;
+
+    while (carsGroup.children.length < ctx.cars.length) {
+      carsGroup.add(
+        new THREE.Mesh(
+          new THREE.BoxGeometry(0.22, 0.11, 0.22),
+          new THREE.MeshBasicMaterial({ color: 0xfef08a })
+        )
+      );
+    }
+    while (carsGroup.children.length > ctx.cars.length) {
+      carsGroup.remove(carsGroup.children[carsGroup.children.length - 1]);
+    }
+    ctx.cars.forEach((c, idx) => {
+      const m = carsGroup.children[idx];
+      const lx = c.fromX + (c.toX - c.fromX) * c.t;
+      const ly = c.fromY + (c.toY - c.fromY) * c.t;
+      m.position.set(lx - offset, 0.08, ly - offset);
+      m.material.color.setHex(c.color);
+    });
+
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(animate);
+
+  return {
+    mode: "3D WebGL (Three.js Raycaster)",
+    renderCity(state) {
+      ctx.setState(state);
+      rebuildMeshes();
     },
-    resetCamera() {
-      camera.position.set(16.5, 15.5, 18.5);
-      controls.target.set(0, 0.5, 0);
-      controls.update();
-    },
-    dispose() {
-      if (frameId !== null) window.cancelAnimationFrame(frameId);
-      resizeObserver.disconnect();
-      controls.dispose();
-      renderer.dispose();
+    setOverlayMode(mode) {
+      ctx.setOverlay(mode);
+      rebuildMeshes();
     },
   };
 }
 
-export function createCityScene(container) {
-  let latestState = null;
-  let disposed = false;
-  let backend = createIsometricCanvasBackend(container);
+function initIsometric2DScene(container, ctx) {
+  const canvas = document.createElement("canvas");
+  container.appendChild(canvas);
+  const c2d = canvas.getContext("2d");
 
-  // Attempt non-blocking WebGL upgrade in background if browser permits WebGL
-  const probeCanvas = document.createElement('canvas');
-  const webglAvailable = Boolean(
-    probeCanvas.getContext('webgl2') || probeCanvas.getContext('webgl')
-  );
+  function syncSize() {
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+  }
+  syncSize();
+  window.addEventListener("resize", syncSize);
 
-  if (webglAvailable) {
-    Promise.all([
-      import('three'),
-      import('three/addons/controls/OrbitControls.js'),
-    ])
-      .then(([THREE, { OrbitControls }]) => {
-        if (disposed) return;
-        const webglBackend = createWebGLBackend(container, THREE, OrbitControls);
-        backend.dispose();
-        backend = webglBackend;
-        if (latestState) {
-          backend.syncState(latestState);
-        }
-      })
-      .catch(() => {
-        // Keep fast Isometric 2D Canvas backend active if CDN or WebGL fails
-      });
+  function metrics() {
+    const tileW = Math.min(52, Math.max(28, Math.floor(canvas.width / 20)));
+    const tileH = Math.floor(tileW / 2);
+    const originX = Math.floor(canvas.width / 2);
+    const originY = Math.max(70, Math.floor((canvas.height - GRID_SIZE * tileH) / 2));
+    return { tileW, tileH, originX, originY };
   }
 
+  function gridToScreen(gx, gy, m) {
+    return {
+      sx: m.originX + (gx - gy) * (m.tileW / 2),
+      sy: m.originY + (gx + gy) * (m.tileH / 2),
+    };
+  }
+
+  function screenToGrid(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const m = metrics();
+    const dx = px - m.originX;
+    const dy = py - m.originY;
+    const gx = Math.floor((dx / (m.tileW / 2) + dy / (m.tileH / 2)) / 2);
+    const gy = Math.floor((dy / (m.tileH / 2) - dx / (m.tileW / 2)) / 2);
+    return inBounds(gx, gy) ? { gridX: gx, gridY: gy } : null;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    ctx.setDragging(true);
+    const hit = screenToGrid(e.clientX, e.clientY);
+    if (hit) {
+      ctx.setLastKey(`${hit.gridX},${hit.gridY}`);
+      ctx.onTileAction?.(hit.gridX, hit.gridY);
+    }
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    const hit = screenToGrid(e.clientX, e.clientY);
+    ctx.setHover(hit);
+    if (hit) {
+      ctx.onTileHover?.(hit.gridX, hit.gridY);
+      if (ctx.isDragging()) {
+        const key = `${hit.gridX},${hit.gridY}`;
+        if (key !== ctx.getLastKey()) {
+          ctx.setLastKey(key);
+          ctx.onTileAction?.(hit.gridX, hit.gridY);
+        }
+      }
+    }
+  });
+
+  window.addEventListener("pointerup", () => {
+    ctx.setDragging(false);
+    ctx.setLastKey("");
+  });
+
+  let lastTs = performance.now();
+  function drawLoop(now) {
+    requestAnimationFrame(drawLoop);
+    const dt = Math.min(0.05, (now - lastTs) / 1000);
+    lastTs = now;
+    ctx.advanceVehicles(dt);
+
+    c2d.clearRect(0, 0, canvas.width, canvas.height);
+    const state = ctx.getState();
+    if (!state) return;
+
+    const m = metrics();
+    const hover = ctx.getHover();
+
+    for (let y = 0; y < GRID_SIZE; y += 1) {
+      for (let x = 0; x < GRID_SIZE; x += 1) {
+        const tile = state.grid[y][x];
+        const { sx, sy } = gridToScreen(x, y, m);
+        const ov = overlayColorHex(tile, ctx.getOverlay());
+
+        let baseColor = (x + y) % 2 === 0 ? COLORS.GROUND_A : COLORS.GROUND_B;
+        if (ov !== null && tile.type !== "EMPTY") baseColor = ov;
+        else if (tile.type !== "EMPTY") baseColor = COLORS[tile.type] ?? COLORS.GROUND_A;
+
+        c2d.beginPath();
+        c2d.moveTo(sx, sy);
+        c2d.lineTo(sx + m.tileW / 2, sy + m.tileH / 2);
+        c2d.lineTo(sx, sy + m.tileH);
+        c2d.lineTo(sx - m.tileW / 2, sy + m.tileH / 2);
+        c2d.closePath();
+        c2d.fillStyle = hexCss(baseColor);
+        c2d.fill();
+        c2d.strokeStyle = hover && hover.gridX === x && hover.gridY === y ? "#38bdf8" : "#0f172a";
+        c2d.lineWidth = hover && hover.gridX === x && hover.gridY === y ? 2 : 1;
+        c2d.stroke();
+
+        if (tile.type !== "EMPTY" && tile.type !== "ROAD") {
+          const hPx = tile.level > 0 ? 8 + tile.level * 10 : 6;
+          c2d.fillStyle = hexCss(COLORS[tile.type] ?? 0x94a3b8);
+          c2d.fillRect(sx - 7, sy + m.tileH / 2 - hPx, 14, hPx);
+        }
+        if (tile.issue) {
+          c2d.fillStyle = "#ef4444";
+          c2d.beginPath();
+          c2d.arc(sx, sy + 4, 4, 0, Math.PI * 2);
+          c2d.fill();
+        }
+      }
+    }
+
+    for (const car of ctx.cars) {
+      const lx = car.fromX + (car.toX - car.fromX) * car.t;
+      const ly = car.fromY + (car.toY - car.fromY) * car.t;
+      const { sx, sy } = gridToScreen(lx, ly, m);
+      c2d.fillStyle = hexCss(car.color);
+      c2d.beginPath();
+      c2d.arc(sx, sy + m.tileH / 2, 3.2, 0, Math.PI * 2);
+      c2d.fill();
+    }
+  }
+  requestAnimationFrame(drawLoop);
+
   return {
-    syncState(state) {
-      latestState = state;
-      backend.syncState(state);
+    mode: "2D Isometric Canvas (Hardened Browser Fallback)",
+    renderCity(state) {
+      ctx.setState(state);
     },
-    resetCamera() {
-      backend.resetCamera();
-    },
-    dispose() {
-      disposed = true;
-      backend.dispose();
+    setOverlayMode(mode) {
+      ctx.setOverlay(mode);
     },
   };
 }
