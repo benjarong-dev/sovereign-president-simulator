@@ -1,52 +1,52 @@
-# Civic & Fiscal Policy Sandbox (3D Web Simulation)
+# Sovereign CityRT Sandbox — 16x16 Spatial City Builder & Fiscal Simulator
 
-Interactive client-side simulation exploring the macroeconomic and urban-planning trade-offs between taxation, public stimulus, infrastructure investment, and public approval. Built with native **ES Modules** and **Three.js (v0.170.0)** with zero build-tool overhead, combining public-policy concepts with deterministic state modeling.
+An interactive **3D WebGL (Three.js Raycaster) & 2D Isometric Canvas** spatial city-building simulation inspired by classic municipal builders (*Cities: Skylines* / *CityRT*). Engineered with modular **ES Modules**, zero npm runtime bloat, and deterministic automated unit/compliance tests.
 
 - **Live Browser Sandbox:** https://benjarong-dev.github.io/sovereign-president-simulator/
 
-## Module Architecture
+## Core Gameplay & Engineering Architecture
+
+1. **Interactive 16x16 Raycast Grid:** Left-click or drag directly onto terrain plots to lay **Roads**, zone **Residential (R) / Commercial (C) / Industrial (I)** districts, and construct **Wind Turbines (120 MW)**, **Water Towers (120 kL)**, **Parks**, **Schools**, and **Hospitals**.
+2. **Spatial Adjacency & Utility Simulation (`src/simulation/policyEngine.js`):**
+   - Zones require an adjacent `ROAD` plus city-wide `Power` and `Water` capacity (`NO_ROAD`, `NO_POWER`, `NO_WATER` diagnostics).
+   - Industrial plots emit Manhattan-distance smog; placing factories beside homes triggers `POLLUTED` penalties and depresses citizen approval unless buffered by Urban Parks.
+3. **Real-Time Simulation Loop & Road Traffic (`src/render/cityScene.js`):** Supports `Pause / 1x / 2x / 3x` continuous municipal ticks, animated vehicles navigating player-built road intersections, and dual WebGL / hardened-browser 2D Isometric Canvas rendering.
+
+## Module Layout
 
 ```text
 sovereign-president-simulator/
-├── index.html                        # Semantic HTML5 shell & ES Import Map
+├── LICENSE                            # MIT License
+├── THIRD_PARTY_NOTICES.md             # MIT compatibility attribution (Three.js v0.170.0)
+├── README.md
+├── package.json                       # Native ES Module test runner configuration
+├── index.html                         # Top KPI HUD, RCI demand bars & build palette
 ├── css/
-│   └── styles.css                    # Responsive dark telemetry UI layout
+│   └── styles.css                     # Responsive dark municipal HUD layout
 ├── src/
-│   ├── main.js                       # DOM event bindings & simulation loop controller
-│   ├── simulation/
-│   │   └── policyEngine.js           # Pure deterministic fiscal & zoning state engine
-│   └── render/
-│       └── cityScene.js              # Three.js v0.170 WebGL grid & OrbitControls scene
+│   ├── main.js                        # UI controller, drag-painting & 1x/2x/3x tick loop
+│   ├── render/
+│   │   └── cityScene.js               # 3D Three.js Raycaster + 2D Isometric fallback & traffic
+│   └── simulation/
+│       └── policyEngine.js            # Pure 16x16 spatial RCI, utility & adjacency engine
 └── tests/
-    └── policyEngine.test.mjs         # Zero-dependency Node.js unit test suite
+    ├── policyEngine.test.mjs          # Unit tests for RCI growth, utilities & smog adjacency
+    └── repoCompliance.test.mjs        # Automated secret/path scanner & MIT license audit
 ```
 
-## Policy & Economic Model Mechanics
-
-Rather than relying on random number generation, every quarterly tick computes state transitions deterministically from explicit policy levers:
-
-| Policy Lever / Action | Immediate Fiscal Impact | Macroeconomic & Approval Trade-Off |
-|---|---|---|
-| **Tax Rate Adjustment (`10%` – `45%`)** | Scales quarterly tax revenue collected from active GDP | Rates above `28%` dampen private industrial output and reduce approval; overly low rates risk structural deficits |
-| **Residential Zoning (`+1 District`)** | Costs `$45M` capital outlay | Expands labor capacity and population growth; requires matching industrial jobs to prevent unemployment spikes |
-| **Industrial Zoning (`+1 District`)** | Costs `$70M` capital outlay | Raises base GDP output and job creation, but increases urban congestion/inflation pressure without civic infrastructure |
-| **Civic Infrastructure (`+1 Plaza/Transit`)** | Costs `$60M` capital outlay | Boosts productivity multiplier, dampens inflation friction, and improves long-term public approval |
-| **Targeted Fiscal Stimulus (`$50M`)** | Immediate `$50M` treasury draw | Provides short-term approval and demand relief during downturns, while nudging quarterly inflation upward |
-
-## Local Development & Verification
-
-Because the project uses standard browser ES Modules and Node's built-in test runner (`node:test`), no `npm install` step is required.
+## Local Verification & Testing
 
 ```bash
-# 1. Clone repository
 git clone https://github.com/benjarong-dev/sovereign-president-simulator.git
 cd sovereign-president-simulator
 
-# 2. Run deterministic policy-engine unit tests (Node.js 18+)
-node --test tests/policyEngine.test.mjs
+# 1. Run all 12 unit, spatial simulation & repository security/license tests
+node --test
 
-# 3. Serve locally over HTTP for ES Module imports
+# 2. Launch local HTTP server and open http://127.0.0.1:8080
 python3 -m http.server 8080
-# Open http://localhost:8080 in browser
 ```
 
+## License
+
+MIT License — see `LICENSE` and `THIRD_PARTY_NOTICES.md`.
