@@ -1,193 +1,173 @@
-/**
- * Main Application Controller
- * Coordinates user DOM events, simulation loop timer, and 3D scene updates.
- */
-
 import {
-  POLICY_COSTS,
-  GRID_LIMIT,
-  createInitialState,
+  TILE_SPECS,
+  createEmptyCity,
+  createStarterCity,
+  placeTile,
   setTaxRate,
-  enactZoning,
-  enactStimulus,
-  advanceQuarter,
-} from './simulation/policyEngine.js';
-import { createCityScene } from './render/cityScene.js';
+  stepSimulation,
+} from "./simulation/policyEngine.js";
+import { createCityScene } from "./render/cityScene.js";
 
-const TICK_INTERVAL_MS = 3500;
-const MAX_LOG_ENTRIES = 5;
+let cityState = createStarterCity();
+let activeTool = "ROAD";
+let simSpeed = 1; // 0=Pause, 1=1x, 2=2x, 3=3x
+let inspectedCoord = { x: 6, y: 6 };
 
-const dom = {
-  sceneContainer: document.getElementById('scene-container'),
-  periodDisplay: document.getElementById('period-display'),
-  treasuryVal: document.getElementById('treasury-val'),
-  netBalanceVal: document.getElementById('net-balance-val'),
-  gdpVal: document.getElementById('gdp-val'),
-  populationVal: document.getElementById('population-val'),
-  approvalVal: document.getElementById('approval-val'),
-  approvalBar: document.getElementById('approval-bar'),
-  inflationVal: document.getElementById('inflation-val'),
-  unemploymentVal: document.getElementById('unemployment-val'),
-  laborSummaryVal: document.getElementById('labor-summary-val'),
-  zoneResCount: document.getElementById('zone-res-count'),
-  zoneIndCount: document.getElementById('zone-ind-count'),
-  zoneCivCount: document.getElementById('zone-civ-count'),
-  gridUsageVal: document.getElementById('grid-usage-val'),
-  taxSlider: document.getElementById('tax-slider'),
-  taxRateLabel: document.getElementById('tax-rate-label'),
-  btnResidential: document.getElementById('btn-zone-residential'),
-  btnIndustrial: document.getElementById('btn-zone-industrial'),
-  btnCivic: document.getElementById('btn-zone-civic'),
-  btnStimulus: document.getElementById('btn-stimulus'),
-  btnStepQuarter: document.getElementById('btn-step-quarter'),
-  btnTogglePlay: document.getElementById('btn-toggle-play'),
-  btnResetCamera: document.getElementById('btn-reset-camera'),
-  btnResetSim: document.getElementById('btn-reset-sim'),
-  policyLogList: document.getElementById('policy-log-list'),
-};
+const viewport = document.getElementById("viewport");
+const toastEl = document.getElementById("status-toast");
+const inspectorEl = document.getElementById("inspector-box");
+const alertsEl = document.getElementById("alerts-list");
 
-let appState = createInitialState();
-let autoPlayTimer = null;
-const eventLogs = ['[2026 Q1] Fiscal administration initialized.'];
-
-const cityScene = createCityScene(dom.sceneContainer);
-
-function formatSignedCurrency(amount) {
-  const sign = amount >= 0 ? '+' : '-';
-  return `${sign}$${Math.abs(amount).toFixed(1)}M / qtr`;
+function showToast(msg) {
+  toastEl.textContent = msg;
 }
 
-function appendLog(message) {
-  const prefix = `[${appState.year} Q${appState.quarter}]`;
-  eventLogs.unshift(`${prefix} ${message}`);
-  if (eventLogs.length > MAX_LOG_ENTRIES) {
-    eventLogs.pop();
-  }
+function renderInspector(x, y) {
+  const tile = cityState.grid[y]?.[x];
+  if (!tile) return;
+
+  const spec = TILE_SPECS[tile.type];
+  const issueBadge = tile.issue ? `⚠ ${tile.issue}` : "Nominal";
+
+  inspectorEl.innerHTML = [
+    `<div><strong>Plot (${x}, ${y}):</strong> ${spec.label}</div>`,
+    `<div><strong>Density Level:</strong> Lv.${tile.level} (${tile.growthProgress}%)</div>`,
+    `<div><strong>Road Access:</strong> ${tile.roadConnected ? "Connected" : "Disconnected"}</div>`,
+    `<div><strong>Utilities:</strong> Power ${tile.powered ? "OK" : "OUT"} | Water ${tile.watered ? "OK" : "OUT"}</div>`,
+    `<div><strong>Happiness / Pollution:</strong> ${tile.happiness}% | Smog ${tile.pollution}</div>`,
+    `<div><strong>Status:</strong> ${issueBadge}</div>`,
+  ].join("");
 }
 
-function renderHud() {
-  dom.periodDisplay.textContent = `${appState.year} Q${appState.quarter}`;
-  dom.treasuryVal.textContent = `$${appState.treasury.toFixed(1)}M`;
-  dom.treasuryVal.className = `metric-value ${appState.treasury < 0 ? 'text-negative' : ''}`;
+function updateHud() {
+  const m = cityState.metrics;
+  document.getElementById("kpi-day").textContent = String(cityState.day);
+  document.getElementById("kpi-treasury").textContent = `$${cityState.treasury.toLocaleString()}`;
 
-  const { netBalance, laborForce, jobsAvailable } = appState.lastReport;
-  dom.netBalanceVal.textContent = formatSignedCurrency(netBalance);
-  dom.netBalanceVal.className = `metric-sub ${netBalance >= 0 ? 'text-positive' : 'text-negative'}`;
+  const sign = cityState.netCashflow >= 0 ? "+" : "";
+  document.getElementById("kpi-cashflow").textContent = `${sign}$${cityState.netCashflow}/d`;
+  document.getElementById("kpi-pop").textContent = m.population.toLocaleString();
+  document.getElementById("kpi-jobs").textContent = m.totalJobs.toLocaleString();
+  document.getElementById("kpi-approval").textContent = `${m.approval}%`;
+  document.getElementById("kpi-power").textContent = `${m.powerDemand}/${m.powerSupply} MW`;
+  document.getElementById("kpi-water").textContent = `${m.waterDemand}/${m.waterSupply} kL`;
 
-  dom.gdpVal.textContent = `$${appState.gdp.toFixed(1)}M`;
-  dom.populationVal.textContent = `${appState.population}k`;
+  const normDemand = (val) => `${Math.max(5, Math.min(100, Math.round((val + 100) / 2)))}%`;
+  document.getElementById("bar-r").style.width = normDemand(m.demand.residential);
+  document.getElementById("bar-c").style.width = normDemand(m.demand.commercial);
+  document.getElementById("bar-i").style.width = normDemand(m.demand.industrial);
 
-  dom.approvalVal.textContent = `${appState.approvalRating.toFixed(1)}%`;
-  dom.approvalBar.style.width = `${appState.approvalRating}%`;
-  if (appState.approvalRating < 40) {
-    dom.approvalBar.style.backgroundColor = '#f43f5e';
-  } else if (appState.approvalRating >= 65) {
-    dom.approvalBar.style.backgroundColor = '#10b981';
-  } else {
-    dom.approvalBar.style.backgroundColor = '#38bdf8';
-  }
+  const warnings = [];
+  if (m.powerDemand > m.powerSupply) warnings.push("Power deficit — build Wind Turbine (120 MW).");
+  if (m.waterDemand > m.waterSupply) warnings.push("Water deficit — build Water Tower (120 kL).");
+  if (m.avgPollution >= 25) warnings.push("High urban smog — buffer Industrial zones with Parks.");
+  if (cityState.treasury < 150) warnings.push("Low municipal treasury — adjust tax rate or pause expansion.");
 
-  dom.inflationVal.textContent = `${appState.inflationRate.toFixed(1)}%`;
-  dom.inflationVal.className = `metric-value ${appState.inflationRate > 4.5 ? 'text-warning' : ''}`;
+  alertsEl.innerHTML =
+    warnings.length === 0
+      ? "<li>All municipal networks operating within capacity.</li>"
+      : warnings.map((w) => `<li class="warn">${w}</li>`).join("");
 
-  dom.unemploymentVal.textContent = `${appState.unemploymentRate.toFixed(1)}%`;
-  dom.unemploymentVal.className = `metric-value ${appState.unemploymentRate > 7.5 ? 'text-negative' : ''}`;
-  dom.laborSummaryVal.textContent = `${jobsAvailable}k jobs / ${laborForce}k labor`;
-
-  dom.zoneResCount.textContent = String(appState.zones.residential);
-  dom.zoneIndCount.textContent = String(appState.zones.industrial);
-  dom.zoneCivCount.textContent = String(appState.zones.civic);
-  dom.gridUsageVal.textContent = `${appState.districts.length}/${GRID_LIMIT}`;
-
-  const pctTax = Math.round(appState.taxRate * 100);
-  dom.taxSlider.value = String(pctTax);
-  dom.taxRateLabel.textContent = `${pctTax}%`;
-
-  const gridFull = appState.districts.length >= GRID_LIMIT;
-  dom.btnResidential.disabled = gridFull || appState.treasury < POLICY_COSTS.residential;
-  dom.btnIndustrial.disabled = gridFull || appState.treasury < POLICY_COSTS.industrial;
-  dom.btnCivic.disabled = gridFull || appState.treasury < POLICY_COSTS.civic;
-  dom.btnStimulus.disabled = appState.treasury < POLICY_COSTS.stimulus;
-
-  dom.policyLogList.innerHTML = '';
-  for (const entry of eventLogs) {
-    const li = document.createElement('li');
-    li.textContent = entry;
-    dom.policyLogList.appendChild(li);
-  }
-
-  cityScene.syncState(appState);
+  renderInspector(inspectedCoord.x, inspectedCoord.y);
 }
 
-function handleZoningClick(zoneType, label) {
-  const result = enactZoning(appState, zoneType);
-  if (result.ok) {
-    appState = result.state;
-    appendLog(`Zoned ${label} (-$${POLICY_COSTS[zoneType]}M).`);
-    renderHud();
+const sceneCtrl = createCityScene(viewport, {
+  onTileAction(x, y) {
+    inspectedCoord = { x, y };
+    if (activeTool === "INSPECT") {
+      renderInspector(x, y);
+      return;
+    }
+    const result = placeTile(cityState, x, y, activeTool);
+    if (!result.ok) {
+      showToast(`Cannot place ${activeTool} at (${x}, ${y}): ${result.reason}`);
+      return;
+    }
+    sceneCtrl.renderCity(cityState);
+    updateHud();
+    if (result.cost > 0) {
+      showToast(`Built ${activeTool} at (${x}, ${y}) for $${result.cost}`);
+    }
+  },
+  onTileHover(x, y) {
+    inspectedCoord = { x, y };
+    renderInspector(x, y);
+  },
+});
+
+document.getElementById("renderer-badge").textContent = sceneCtrl.mode;
+sceneCtrl.renderCity(cityState);
+updateHud();
+
+document.querySelectorAll(".tool-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tool-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeTool = btn.dataset.tool;
+    showToast(`Active tool: ${activeTool}`);
+  });
+});
+
+document.querySelectorAll(".speed-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".speed-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    simSpeed = Number.parseInt(btn.dataset.speed, 10);
+  });
+});
+
+document.querySelectorAll(".overlay-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".overlay-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    sceneCtrl.setOverlayMode(btn.dataset.overlay);
+  });
+});
+
+const taxSlider = document.getElementById("tax-slider");
+const taxVal = document.getElementById("tax-val");
+taxSlider.addEventListener("input", () => {
+  taxVal.textContent = `${taxSlider.value}%`;
+  setTaxRate(cityState, Number.parseInt(taxSlider.value, 10));
+  updateHud();
+});
+
+document.getElementById("btn-starter").addEventListener("click", () => {
+  cityState = createStarterCity();
+  taxSlider.value = String(cityState.taxRate);
+  taxVal.textContent = `${cityState.taxRate}%`;
+  sceneCtrl.renderCity(cityState);
+  updateHud();
+  showToast("Reset to playable starter town.");
+});
+
+document.getElementById("btn-empty").addEventListener("click", () => {
+  cityState = createEmptyCity({ startingTreasury: 4500, taxRate: 10 });
+  taxSlider.value = "10";
+  taxVal.textContent = "10%";
+  sceneCtrl.renderCity(cityState);
+  updateHud();
+  showToast("Cleared blank 16x16 map ($4,500 budget).");
+});
+
+const TICK_INTERVALS_MS = { 1: 1400, 2: 680, 3: 320 };
+let accMs = 0;
+let prevTick = performance.now();
+
+function simulationLoop(now) {
+  requestAnimationFrame(simulationLoop);
+  const delta = now - prevTick;
+  prevTick = now;
+
+  if (simSpeed === 0) return;
+  accMs += delta;
+  const threshold = TICK_INTERVALS_MS[simSpeed] ?? 1400;
+
+  if (accMs >= threshold) {
+    accMs = 0;
+    stepSimulation(cityState);
+    sceneCtrl.renderCity(cityState);
+    updateHud();
   }
 }
-
-function stepQuarter() {
-  appState = advanceQuarter(appState);
-  renderHud();
-}
-
-function setAutoPlay(enabled) {
-  if (autoPlayTimer !== null) {
-    window.clearInterval(autoPlayTimer);
-    autoPlayTimer = null;
-  }
-
-  if (enabled) {
-    autoPlayTimer = window.setInterval(stepQuarter, TICK_INTERVAL_MS);
-    dom.btnTogglePlay.textContent = 'Auto-Run: ON';
-    dom.btnTogglePlay.classList.add('active');
-  } else {
-    dom.btnTogglePlay.textContent = 'Auto-Run: PAUSED';
-    dom.btnTogglePlay.classList.remove('active');
-  }
-}
-
-dom.taxSlider.addEventListener('input', (event) => {
-  const pct = Number(event.target.value);
-  appState = setTaxRate(appState, pct / 100);
-  appendLog(`Adjusted effective tax rate to ${pct}%.`);
-  renderHud();
-});
-
-dom.btnResidential.addEventListener('click', () => handleZoningClick('residential', 'Residential District'));
-dom.btnIndustrial.addEventListener('click', () => handleZoningClick('industrial', 'Industrial District'));
-dom.btnCivic.addEventListener('click', () => handleZoningClick('civic', 'Civic Infrastructure'));
-
-dom.btnStimulus.addEventListener('click', () => {
-  const result = enactStimulus(appState);
-  if (result.ok) {
-    appState = result.state;
-    appendLog(`Disbursed targeted stimulus (-$${POLICY_COSTS.stimulus}M).`);
-    renderHud();
-  }
-});
-
-dom.btnStepQuarter.addEventListener('click', () => {
-  appendLog('Advanced fiscal quarter manually.');
-  stepQuarter();
-});
-
-dom.btnTogglePlay.addEventListener('click', () => {
-  setAutoPlay(autoPlayTimer === null);
-});
-
-dom.btnResetCamera.addEventListener('click', () => {
-  cityScene.resetCamera();
-});
-
-dom.btnResetSim.addEventListener('click', () => {
-  appState = createInitialState();
-  eventLogs.length = 0;
-  eventLogs.push('[2026 Q1] Simulation state reset to baseline.');
-  renderHud();
-});
-
-renderHud();
-setAutoPlay(true);
+requestAnimationFrame(simulationLoop);
