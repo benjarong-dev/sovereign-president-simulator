@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Civic &amp; Fiscal Policy Sandbox</title>
+  <title>Sovereign City Builder — 16x16 RCI & Utility Simulator</title>
   <link rel="stylesheet" href="./css/styles.css" />
   <script type="importmap">
     {
@@ -15,106 +15,97 @@
   </script>
 </head>
 <body>
-  <div id="scene-container" aria-label="3D Urban Policy Grid"></div>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Sovereign CityRT Sandbox</h1>
+      <span id="renderer-badge" class="badge">Initializing...</span>
+    </div>
 
-  <main class="hud-layout">
-    <section class="panel" aria-label="Macroeconomic Telemetry">
-      <header class="panel-header">
-        <h1 class="panel-title">Macroeconomic Telemetry</h1>
-        <span id="period-display" class="period-badge">2026 Q1</span>
-      </header>
+    <div class="kpi-strip">
+      <div class="kpi"><span>Day</span><strong id="kpi-day">1</strong></div>
+      <div class="kpi"><span>Treasury</span><strong id="kpi-treasury">$4,200</strong></div>
+      <div class="kpi"><span>Daily Net</span><strong id="kpi-cashflow">+$0/d</strong></div>
+      <div class="kpi"><span>Population</span><strong id="kpi-pop">0</strong></div>
+      <div class="kpi"><span>Jobs</span><strong id="kpi-jobs">0</strong></div>
+      <div class="kpi"><span>Approval</span><strong id="kpi-approval">75%</strong></div>
+      <div class="kpi"><span>Power</span><strong id="kpi-power">0/0 MW</strong></div>
+      <div class="kpi"><span>Water</span><strong id="kpi-water">0/0 kL</strong></div>
+    </div>
 
-      <div class="metrics-grid">
-        <article class="metric-card">
-          <div class="metric-label">Treasury Reserve</div>
-          <div id="treasury-val" class="metric-value">$240.0M</div>
-          <div id="net-balance-val" class="metric-sub text-positive">+$2.1M / qtr</div>
-        </article>
+    <div class="time-controls">
+      <button type="button" class="speed-btn" data-speed="0">Pause</button>
+      <button type="button" class="speed-btn active" data-speed="1">1x</button>
+      <button type="button" class="speed-btn" data-speed="2">2x</button>
+      <button type="button" class="speed-btn" data-speed="3">3x</button>
+    </div>
+  </header>
 
-        <article class="metric-card">
-          <div class="metric-label">Annualized GDP</div>
-          <div id="gdp-val" class="metric-value">$520.0M</div>
-          <div class="metric-sub">Pop: <span id="population-val">120k</span></div>
-        </article>
-
-        <article class="metric-card">
-          <div class="metric-label">Inflation (CPI)</div>
-          <div id="inflation-val" class="metric-value">2.4%</div>
-          <div class="metric-sub">Target: 2.0% - 3.0%</div>
-        </article>
-
-        <article class="metric-card">
-          <div class="metric-label">Unemployment</div>
-          <div id="unemployment-val" class="metric-value">4.3%</div>
-          <div id="labor-summary-val" class="metric-sub">67k jobs / 70k labor</div>
-        </article>
-      </div>
-
-      <div class="approval-section">
-        <div class="approval-row">
-          <span>Public Approval Index</span>
-          <strong id="approval-val">64.0%</strong>
+  <main class="workspace">
+    <aside class="left-dock">
+      <section class="panel-section">
+        <h2>Build &amp; Zone Tools</h2>
+        <p class="hint">Left-click or drag on grid to build. Right-drag to orbit (3D).</p>
+        <div id="tool-list" class="tool-grid">
+          <button type="button" class="tool-btn active" data-tool="ROAD">Road ($20)</button>
+          <button type="button" class="tool-btn zone-r" data-tool="RESIDENTIAL">Zone R ($60)</button>
+          <button type="button" class="tool-btn zone-c" data-tool="COMMERCIAL">Zone C ($80)</button>
+          <button type="button" class="tool-btn zone-i" data-tool="INDUSTRIAL">Zone I ($100)</button>
+          <button type="button" class="tool-btn" data-tool="WIND_TURBINE">Wind 120MW ($220)</button>
+          <button type="button" class="tool-btn" data-tool="WATER_TOWER">Water 120kL ($180)</button>
+          <button type="button" class="tool-btn" data-tool="PARK">Urban Park ($90)</button>
+          <button type="button" class="tool-btn" data-tool="SCHOOL">School ($260)</button>
+          <button type="button" class="tool-btn" data-tool="HOSPITAL">Hospital ($320)</button>
+          <button type="button" class="tool-btn danger" data-tool="BULLDOZE">Bulldoze ($5)</button>
+          <button type="button" class="tool-btn" data-tool="INSPECT">Inspect Tile</button>
         </div>
-        <div class="progress-track">
-          <div id="approval-bar" class="progress-fill" style="width: 64%"></div>
+      </section>
+
+      <section class="panel-section">
+        <h2>RCI Demand &amp; Tax Policy</h2>
+        <div class="rci-bars">
+          <div class="rci-row"><span>R</span><div class="bar-track"><div id="bar-r" class="bar-fill fill-r"></div></div></div>
+          <div class="rci-row"><span>C</span><div class="bar-track"><div id="bar-c" class="bar-fill fill-c"></div></div></div>
+          <div class="rci-row"><span>I</span><div class="bar-track"><div id="bar-i" class="bar-fill fill-i"></div></div></div>
         </div>
-      </div>
+        <label class="slider-label" for="tax-slider">
+          Municipal Tax Rate: <strong id="tax-val">10%</strong>
+        </label>
+        <input id="tax-slider" type="range" min="4" max="25" step="1" value="10" />
+      </section>
 
-      <div class="zone-summary">
-        <span>Res: <strong id="zone-res-count">3</strong></span>
-        <span>Ind: <strong id="zone-ind-count">2</strong></span>
-        <span>Civic: <strong id="zone-civ-count">1</strong></span>
-        <span>Grid: <strong id="grid-usage-val">6/64</strong></span>
-      </div>
+      <section class="panel-section">
+        <h2>Map Data Overlays</h2>
+        <div class="overlay-row">
+          <button type="button" class="overlay-btn active" data-overlay="NONE">Standard</button>
+          <button type="button" class="overlay-btn" data-overlay="POLLUTION">Pollution</button>
+          <button type="button" class="overlay-btn" data-overlay="HAPPINESS">Happiness</button>
+        </div>
+        <div class="action-row">
+          <button type="button" id="btn-starter" class="secondary-btn">Reset Starter Town</button>
+          <button type="button" id="btn-empty" class="secondary-btn">Clear Blank Map</button>
+        </div>
+      </section>
+    </aside>
 
-      <div>
-        <div class="log-title">Administration Ledger</div>
-        <ul id="policy-log-list" class="log-list"></ul>
-      </div>
+    <section id="viewport" class="viewport">
+      <div id="status-toast" class="toast">Ready — click or drag on the 16x16 terrain to build.</div>
     </section>
 
-    <section class="panel" aria-label="Fiscal and Zoning Controls">
-      <header class="panel-header">
-        <h2 class="panel-title">Fiscal &amp; Zoning Levers</h2>
-      </header>
-
-      <div class="control-group">
-        <div class="slider-header">
-          <label for="tax-slider">Effective Tax Rate</label>
-          <strong id="tax-rate-label">24%</strong>
+    <aside class="right-dock">
+      <section class="panel-section">
+        <h2>Tile Inspector</h2>
+        <div id="inspector-box" class="inspector-box">
+          <p>Hover or click any plot on the 16x16 grid to inspect road access, utilities, pollution, and citizen happiness.</p>
         </div>
-        <input id="tax-slider" type="range" min="10" max="45" step="1" value="24" />
-      </div>
+      </section>
 
-      <div class="button-stack">
-        <button id="btn-zone-residential" type="button" class="policy-btn">
-          <span>Zone Residential District</span>
-          <span class="btn-cost">$45M</span>
-        </button>
-
-        <button id="btn-zone-industrial" type="button" class="policy-btn">
-          <span>Zone Industrial District</span>
-          <span class="btn-cost">$70M</span>
-        </button>
-
-        <button id="btn-zone-civic" type="button" class="policy-btn">
-          <span>Build Civic Infrastructure</span>
-          <span class="btn-cost">$60M</span>
-        </button>
-
-        <button id="btn-stimulus" type="button" class="policy-btn">
-          <span>Disburse Fiscal Stimulus</span>
-          <span class="btn-cost">$50M</span>
-        </button>
-      </div>
-
-      <div class="sim-toolbar">
-        <button id="btn-step-quarter" type="button" class="sim-btn">Next Quarter</button>
-        <button id="btn-toggle-play" type="button" class="sim-btn active">Auto-Run: ON</button>
-        <button id="btn-reset-camera" type="button" class="sim-btn">Reset Camera</button>
-        <button id="btn-reset-sim" type="button" class="sim-btn">Reset Policy</button>
-      </div>
-    </section>
+      <section class="panel-section">
+        <h2>City Diagnostics</h2>
+        <ul id="alerts-list" class="alerts-list">
+          <li>All municipal systems nominal.</li>
+        </ul>
+      </section>
+    </aside>
   </main>
 
   <script type="module" src="./src/main.js"></script>
