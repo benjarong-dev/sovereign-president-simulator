@@ -1,173 +1,103 @@
 import {
-  TILE_SPECS,
   createEmptyCity,
   createStarterCity,
   placeTile,
+  setPolicyBudgets,
   setTaxRate,
   stepSimulation,
 } from "./simulation/policyEngine.js";
 import { createCityScene } from "./render/cityScene.js";
+import { createHudController } from "./ui/HudController.js";
 
-let cityState = createStarterCity();
-let activeTool = "ROAD";
-let simSpeed = 1; // 0=Pause, 1=1x, 2=2x, 3=3x
-let inspectedCoord = { x: 6, y: 6 };
+let cityState = createStarterCity("RIVER_VALLEY");
+let activeTool = "RESIDENTIAL";
+let simSpeed = 1;
+let hoverCoord = { x: 8, y: 11 };
 
-const viewport = document.getElementById("viewport");
-const toastEl = document.getElementById("status-toast");
-const inspectorEl = document.getElementById("inspector-box");
-const alertsEl = document.getElementById("alerts-list");
+const stageEl = document.getElementById("canvas-stage");
 
-function showToast(msg) {
-  toastEl.textContent = msg;
-}
+let sceneCtrl = null;
 
-function renderInspector(x, y) {
-  const tile = cityState.grid[y]?.[x];
-  if (!tile) return;
+const hud = createHudController({
+  onSelectTool(tool) {
+    activeTool = tool;
+  },
+  onSpeedChange(speed) {
+    simSpeed = speed;
+  },
+  onToggleLighting() {
+    return sceneCtrl ? sceneCtrl.toggleLighting() : "DAY";
+  },
+  onTaxChange(rate) {
+    setTaxRate(cityState, rate);
+    sceneCtrl.renderCity(cityState);
+    hud.updateStats(cityState);
+    hud.updateInspector(cityState, hoverCoord.x, hoverCoord.y);
+  },
+  onBudgetChange(budgets) {
+    setPolicyBudgets(cityState, budgets);
+    sceneCtrl.renderCity(cityState);
+    hud.updateStats(cityState);
+  },
+  onInfoViewChange(viewMode) {
+    sceneCtrl.setInfoView(viewMode);
+  },
+  onGenerateMap({ biome, withStarter }) {
+    cityState = withStarter
+      ? createStarterCity(biome)
+      : createEmptyCity({ startingTreasury: 7500, taxRate: 10, biome, withCityHall: true });
+    hud.syncSlidersFromState(cityState);
+    sceneCtrl.renderCity(cityState);
+    hud.updateStats(cityState);
+    hud.showToast(`โหลดแผนที่ ${cityState.biomeLabel} เรียบร้อยแล้ว`);
+  },
+});
 
-  const spec = TILE_SPECS[tile.type];
-  const issueBadge = tile.issue ? `⚠ ${tile.issue}` : "Nominal";
-
-  inspectorEl.innerHTML = [
-    `<div><strong>Plot (${x}, ${y}):</strong> ${spec.label}</div>`,
-    `<div><strong>Density Level:</strong> Lv.${tile.level} (${tile.growthProgress}%)</div>`,
-    `<div><strong>Road Access:</strong> ${tile.roadConnected ? "Connected" : "Disconnected"}</div>`,
-    `<div><strong>Utilities:</strong> Power ${tile.powered ? "OK" : "OUT"} | Water ${tile.watered ? "OK" : "OUT"}</div>`,
-    `<div><strong>Happiness / Pollution:</strong> ${tile.happiness}% | Smog ${tile.pollution}</div>`,
-    `<div><strong>Status:</strong> ${issueBadge}</div>`,
-  ].join("");
-}
-
-function updateHud() {
-  const m = cityState.metrics;
-  document.getElementById("kpi-day").textContent = String(cityState.day);
-  document.getElementById("kpi-treasury").textContent = `$${cityState.treasury.toLocaleString()}`;
-
-  const sign = cityState.netCashflow >= 0 ? "+" : "";
-  document.getElementById("kpi-cashflow").textContent = `${sign}$${cityState.netCashflow}/d`;
-  document.getElementById("kpi-pop").textContent = m.population.toLocaleString();
-  document.getElementById("kpi-jobs").textContent = m.totalJobs.toLocaleString();
-  document.getElementById("kpi-approval").textContent = `${m.approval}%`;
-  document.getElementById("kpi-power").textContent = `${m.powerDemand}/${m.powerSupply} MW`;
-  document.getElementById("kpi-water").textContent = `${m.waterDemand}/${m.waterSupply} kL`;
-
-  const normDemand = (val) => `${Math.max(5, Math.min(100, Math.round((val + 100) / 2)))}%`;
-  document.getElementById("bar-r").style.width = normDemand(m.demand.residential);
-  document.getElementById("bar-c").style.width = normDemand(m.demand.commercial);
-  document.getElementById("bar-i").style.width = normDemand(m.demand.industrial);
-
-  const warnings = [];
-  if (m.powerDemand > m.powerSupply) warnings.push("Power deficit — build Wind Turbine (120 MW).");
-  if (m.waterDemand > m.waterSupply) warnings.push("Water deficit — build Water Tower (120 kL).");
-  if (m.avgPollution >= 25) warnings.push("High urban smog — buffer Industrial zones with Parks.");
-  if (cityState.treasury < 150) warnings.push("Low municipal treasury — adjust tax rate or pause expansion.");
-
-  alertsEl.innerHTML =
-    warnings.length === 0
-      ? "<li>All municipal networks operating within capacity.</li>"
-      : warnings.map((w) => `<li class="warn">${w}</li>`).join("");
-
-  renderInspector(inspectedCoord.x, inspectedCoord.y);
-}
-
-const sceneCtrl = createCityScene(viewport, {
+sceneCtrl = createCityScene(stageEl, {
   onTileAction(x, y) {
-    inspectedCoord = { x, y };
+    hoverCoord = { x, y };
     if (activeTool === "INSPECT") {
-      renderInspector(x, y);
+      hud.updateInspector(cityState, x, y);
       return;
     }
-    const result = placeTile(cityState, x, y, activeTool);
-    if (!result.ok) {
-      showToast(`Cannot place ${activeTool} at (${x}, ${y}): ${result.reason}`);
+    const res = placeTile(cityState, x, y, activeTool);
+    if (!res.ok) {
+      hud.showToast(`สร้างไม่ได้ที่ (${x}, ${y}): ${res.reason}`);
       return;
     }
     sceneCtrl.renderCity(cityState);
-    updateHud();
-    if (result.cost > 0) {
-      showToast(`Built ${activeTool} at (${x}, ${y}) for $${result.cost}`);
-    }
+    hud.updateStats(cityState);
+    hud.updateInspector(cityState, x, y);
   },
   onTileHover(x, y) {
-    inspectedCoord = { x, y };
-    renderInspector(x, y);
+    hoverCoord = { x, y };
+    hud.updateInspector(cityState, x, y);
   },
 });
 
-document.getElementById("renderer-badge").textContent = sceneCtrl.mode;
+hud.setRendererBadge(sceneCtrl.mode);
+hud.syncSlidersFromState(cityState);
 sceneCtrl.renderCity(cityState);
-updateHud();
+hud.updateStats(cityState);
+hud.updateInspector(cityState, hoverCoord.x, hoverCoord.y);
 
-document.querySelectorAll(".tool-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tool-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    activeTool = btn.dataset.tool;
-    showToast(`Active tool: ${activeTool}`);
-  });
-});
+const INTERVAL_BY_SPEED = { 1: 1350, 2: 650, 3: 300 };
+let elapsedMs = 0;
+let lastFrame = performance.now();
 
-document.querySelectorAll(".speed-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".speed-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    simSpeed = Number.parseInt(btn.dataset.speed, 10);
-  });
-});
-
-document.querySelectorAll(".overlay-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".overlay-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    sceneCtrl.setOverlayMode(btn.dataset.overlay);
-  });
-});
-
-const taxSlider = document.getElementById("tax-slider");
-const taxVal = document.getElementById("tax-val");
-taxSlider.addEventListener("input", () => {
-  taxVal.textContent = `${taxSlider.value}%`;
-  setTaxRate(cityState, Number.parseInt(taxSlider.value, 10));
-  updateHud();
-});
-
-document.getElementById("btn-starter").addEventListener("click", () => {
-  cityState = createStarterCity();
-  taxSlider.value = String(cityState.taxRate);
-  taxVal.textContent = `${cityState.taxRate}%`;
-  sceneCtrl.renderCity(cityState);
-  updateHud();
-  showToast("Reset to playable starter town.");
-});
-
-document.getElementById("btn-empty").addEventListener("click", () => {
-  cityState = createEmptyCity({ startingTreasury: 4500, taxRate: 10 });
-  taxSlider.value = "10";
-  taxVal.textContent = "10%";
-  sceneCtrl.renderCity(cityState);
-  updateHud();
-  showToast("Cleared blank 16x16 map ($4,500 budget).");
-});
-
-const TICK_INTERVALS_MS = { 1: 1400, 2: 680, 3: 320 };
-let accMs = 0;
-let prevTick = performance.now();
-
-function simulationLoop(now) {
-  requestAnimationFrame(simulationLoop);
-  const delta = now - prevTick;
-  prevTick = now;
+function tickLoop(now) {
+  requestAnimationFrame(tickLoop);
+  const delta = now - lastFrame;
+  lastFrame = now;
 
   if (simSpeed === 0) return;
-  accMs += delta;
-  const threshold = TICK_INTERVALS_MS[simSpeed] ?? 1400;
-
-  if (accMs >= threshold) {
-    accMs = 0;
+  elapsedMs += delta;
+  if (elapsedMs >= (INTERVAL_BY_SPEED[simSpeed] ?? 1350)) {
+    elapsedMs = 0;
     stepSimulation(cityState);
     sceneCtrl.renderCity(cityState);
-    updateHud();
+    hud.updateStats(cityState);
+    hud.updateInspector(cityState, hoverCoord.x, hoverCoord.y);
   }
 }
-requestAnimationFrame(simulationLoop);
+requestAnimationFrame(tickLoop);

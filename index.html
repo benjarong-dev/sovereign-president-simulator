@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sovereign City Builder — 16x16 RCI & Utility Simulator</title>
+  <title>Sovereign Skylines V4 — Multi-Lane Highways, BTS Skytrain, Dam &amp; Stadium</title>
   <link rel="stylesheet" href="./css/styles.css" />
   <script type="importmap">
     {
@@ -15,98 +15,155 @@
   </script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>Sovereign CityRT Sandbox</h1>
-      <span id="renderer-badge" class="badge">Initializing...</span>
-    </div>
+  <div id="canvas-stage"></div>
 
-    <div class="kpi-strip">
-      <div class="kpi"><span>Day</span><strong id="kpi-day">1</strong></div>
-      <div class="kpi"><span>Treasury</span><strong id="kpi-treasury">$4,200</strong></div>
-      <div class="kpi"><span>Daily Net</span><strong id="kpi-cashflow">+$0/d</strong></div>
-      <div class="kpi"><span>Population</span><strong id="kpi-pop">0</strong></div>
-      <div class="kpi"><span>Jobs</span><strong id="kpi-jobs">0</strong></div>
-      <div class="kpi"><span>Approval</span><strong id="kpi-approval">75%</strong></div>
-      <div class="kpi"><span>Power</span><strong id="kpi-power">0/0 MW</strong></div>
-      <div class="kpi"><span>Water</span><strong id="kpi-water">0/0 kL</strong></div>
-    </div>
+  <div id="hud-layer">
+    <header class="hud-top interactive">
+      <div class="brand-chip">
+        <span class="brand-dot"></span>
+        <strong>Sovereign Skylines V4</strong>
+        <span id="renderer-mode" class="mode-tag">Megacity 3D</span>
+      </div>
 
-    <div class="time-controls">
-      <button type="button" class="speed-btn" data-speed="0">Pause</button>
-      <button type="button" class="speed-btn active" data-speed="1">1x</button>
-      <button type="button" class="speed-btn" data-speed="2">2x</button>
-      <button type="button" class="speed-btn" data-speed="3">3x</button>
-    </div>
-  </header>
+      <div class="stat-group">
+        <div class="stat-pill"><span>วันที่</span><strong id="hud-day">1</strong></div>
+        <div class="stat-pill"><span>งบคงคลัง</span><strong id="hud-treasury">$12,000</strong></div>
+        <div class="stat-pill"><span>ดุลรายวัน</span><strong id="hud-cashflow">+$0/d</strong></div>
+        <div class="stat-pill"><span>ประชากร</span><strong id="hud-pop">0</strong></div>
+        <div class="stat-pill"><span>งาน / GDP</span><strong id="hud-gdp">0 | 100</strong></div>
+        <div class="stat-pill"><span>ผู้โดยสารราง/เมล์</span><strong id="hud-transit">0 คน</strong></div>
+        <div class="stat-pill"><span>คะแนนนิยม</span><strong id="hud-approval">80%</strong></div>
+        <div class="stat-pill"><span>ไฟฟ้า</span><strong id="hud-power">0/0 MW</strong></div>
+        <div class="stat-pill"><span>ประปา</span><strong id="hud-water">0/0 kL</strong></div>
+      </div>
 
-  <main class="workspace">
-    <aside class="left-dock">
-      <section class="panel-section">
-        <h2>Build &amp; Zone Tools</h2>
-        <p class="hint">Left-click or drag on grid to build. Right-drag to orbit (3D).</p>
-        <div id="tool-list" class="tool-grid">
-          <button type="button" class="tool-btn active" data-tool="ROAD">Road ($20)</button>
-          <button type="button" class="tool-btn zone-r" data-tool="RESIDENTIAL">Zone R ($60)</button>
-          <button type="button" class="tool-btn zone-c" data-tool="COMMERCIAL">Zone C ($80)</button>
-          <button type="button" class="tool-btn zone-i" data-tool="INDUSTRIAL">Zone I ($100)</button>
-          <button type="button" class="tool-btn" data-tool="WIND_TURBINE">Wind 120MW ($220)</button>
-          <button type="button" class="tool-btn" data-tool="WATER_TOWER">Water 120kL ($180)</button>
-          <button type="button" class="tool-btn" data-tool="PARK">Urban Park ($90)</button>
-          <button type="button" class="tool-btn" data-tool="SCHOOL">School ($260)</button>
-          <button type="button" class="tool-btn" data-tool="HOSPITAL">Hospital ($320)</button>
-          <button type="button" class="tool-btn danger" data-tool="BULLDOZE">Bulldoze ($5)</button>
-          <button type="button" class="tool-btn" data-tool="INSPECT">Inspect Tile</button>
+      <div class="top-right-controls">
+        <button type="button" id="btn-lighting" class="ambience-btn" title="สลับแสงกลางวัน / พลบค่ำ">☀️ กลางวัน</button>
+        <div class="speed-controls">
+          <button type="button" class="speed-btn" data-speed="0" title="หยุดเวลา">⏸</button>
+          <button type="button" class="speed-btn active" data-speed="1" title="1x">▶ 1x</button>
+          <button type="button" class="speed-btn" data-speed="2" title="2x">⏩ 2x</button>
+          <button type="button" class="speed-btn" data-speed="3" title="3x">⏭ 3x</button>
         </div>
-      </section>
+      </div>
+    </header>
 
-      <section class="panel-section">
-        <h2>RCI Demand &amp; Tax Policy</h2>
-        <div class="rci-bars">
-          <div class="rci-row"><span>R</span><div class="bar-track"><div id="bar-r" class="bar-fill fill-r"></div></div></div>
-          <div class="rci-row"><span>C</span><div class="bar-track"><div id="bar-c" class="bar-fill fill-c"></div></div></div>
-          <div class="rci-row"><span>I</span><div class="bar-track"><div id="bar-i" class="bar-fill fill-i"></div></div></div>
-        </div>
-        <label class="slider-label" for="tax-slider">
-          Municipal Tax Rate: <strong id="tax-val">10%</strong>
-        </label>
-        <input id="tax-slider" type="range" min="4" max="25" step="1" value="10" />
-      </section>
+    <aside id="map-drawer" class="hud-drawer left-drawer interactive hidden">
+      <div class="drawer-header">
+        <h3>🌍 เลือกแผนที่และภูมิประเทศ (24×24)</h3>
+        <button type="button" id="close-map" class="icon-close">✕</button>
+      </div>
+      <p class="drawer-sub">เลือกสภาพภูมิประเทศ ถนนทุกขนาดสร้างสะพานข้ามน้ำอัตโนมัติ และสร้างเขื่อนกั้นแม่น้ำได้</p>
 
-      <section class="panel-section">
-        <h2>Map Data Overlays</h2>
-        <div class="overlay-row">
-          <button type="button" class="overlay-btn active" data-overlay="NONE">Standard</button>
-          <button type="button" class="overlay-btn" data-overlay="POLLUTION">Pollution</button>
-          <button type="button" class="overlay-btn" data-overlay="HAPPINESS">Happiness</button>
-        </div>
-        <div class="action-row">
-          <button type="button" id="btn-starter" class="secondary-btn">Reset Starter Town</button>
-          <button type="button" id="btn-empty" class="secondary-btn">Clear Blank Map</button>
-        </div>
-      </section>
+      <div class="biome-list">
+        <button type="button" class="biome-card active" data-biome="RIVER_VALLEY">
+          <strong>🏞️ ลุ่มแม่น้ำสายหลัก (River Valley)</strong>
+          <span>เหมาะสร้างเขื่อนผลิตไฟฟ้าพลังน้ำ สะพาน 10 เลน และรถไฟฟ้า BTS ข้ามแม่น้ำ</span>
+        </button>
+        <button type="button" class="biome-card" data-biome="COASTAL_BAY">
+          <strong>🏖️ อ่าวชายฝั่งทะเล (Coastal Bay)</strong>
+          <span>ชายหาดโค้งติดทะเลสีคราม เหมาะสร้างเมกะมอลล์และสนามกีฬาริมอ่าว</span>
+        </button>
+        <button type="button" class="biome-card" data-biome="ALPINE_HIGHLANDS">
+          <strong>🏔️ หุบเขาอัลไพน์ (Alpine Highlands)</strong>
+          <span>เทือกเขาหิมะและทะเลสาบกลางหุบเขา โบนัสกังหันลมและเขื่อนไฟฟ้า</span>
+        </button>
+        <button type="button" class="biome-card" data-biome="HEARTLAND_PLAINS">
+          <strong>🌾 ที่ราบอุดมสมบูรณ์ (Heartland Plains)</strong>
+          <span>ที่ราบกว้างสำหรับวางโครงข่ายไฮเวย์ 10 เลน และทางรถไฟความเร็วสูง</span>
+        </button>
+      </div>
+
+      <label class="checkbox-row">
+        <input type="checkbox" id="chk-starter-town" checked />
+        <span>วางมหานครเริ่มต้น (มีถนนหลายเลน, BTS, รถไฟ, เขื่อน, ห้าง, สนามบอลครบ)</span>
+      </label>
+
+      <button type="button" id="btn-apply-map" class="primary-apply-btn">สร้างแผนที่ภูมิประเทศนี้ทันที</button>
     </aside>
 
-    <section id="viewport" class="viewport">
-      <div id="status-toast" class="toast">Ready — click or drag on the 16x16 terrain to build.</div>
+    <aside id="policy-drawer" class="hud-drawer left-drawer interactive hidden">
+      <div class="drawer-header">
+        <h3>📜 นโยบายการคลังและงบพัฒนาเมือง</h3>
+        <button type="button" id="close-policy" class="icon-close">✕</button>
+      </div>
+
+      <div class="policy-field">
+        <label for="tax-slider">อัตราภาษีเทศบาล: <strong id="tax-val">10%</strong></label>
+        <input id="tax-slider" type="range" min="4" max="25" step="1" value="10" />
+        <small>ลดภาษีช่วยกระตุ้นโซน RCI ห้างสรรพสินค้า และคนเดินถนนคึกคัก</small>
+      </div>
+
+      <div class="policy-field">
+        <label for="infra-slider">งบบำรุงโครงสร้างพื้นฐาน &amp; ระบบราง: <strong id="infra-val">100%</strong></label>
+        <input id="infra-slider" type="range" min="50" max="150" step="10" value="100" />
+        <small>เพิ่มกำลังผลิตเขื่อน/โรงไฟฟ้า และเพิ่มความจุผู้โดยสาร BTS/รถไฟ</small>
+      </div>
+
+      <div class="policy-field">
+        <label for="green-slider">งบพลังงานสะอาดและลดฝุ่น: <strong id="green-val">20%</strong></label>
+        <input id="green-slider" type="range" min="0" max="100" step="10" value="20" />
+        <small>ลดมลพิษจากโรงงานอุตสาหกรรมและเพิ่มความสุขคนเดินถนน</small>
+      </div>
+    </aside>
+
+    <aside id="infoview-drawer" class="hud-infoview interactive hidden">
+      <div class="drawer-header">
+        <h4>🗺️ มุมมองข้อมูล (Info Views)</h4>
+        <button type="button" id="close-infoview" class="icon-close">✕</button>
+      </div>
+      <div class="infoview-grid">
+        <button type="button" class="view-btn active" data-view="NONE">🏙️ เมืองสมจริง (Standard 3D)</button>
+        <button type="button" class="view-btn" data-view="FISCAL">💰 รายได้ภาษีสุทธิ (Tax / Fiscal)</button>
+        <button type="button" class="view-btn" data-view="APPROVAL">😊 ความพึงพอใจ (Approval)</button>
+        <button type="button" class="view-btn" data-view="INFRA">⚡ โครงข่ายน้ำ-ไฟ-ราง (Infrastructure)</button>
+        <button type="button" class="view-btn" data-view="POLLUTION">🌫️ มลพิษทางอากาศ (Pollution)</button>
+      </div>
+      <div class="legend-bar">
+        <span>วิกฤต / ต่ำ</span>
+        <div class="gradient-strip"></div>
+        <span>ดีเยี่ยม / สูง</span>
+      </div>
+    </aside>
+
+    <section class="inspector-card interactive">
+      <div id="inspector-content">
+        <strong>ชี้เมาส์ตรวจแปลงที่ดิน (24×24)</strong>
+        <p>คลิกซ้ายลากสร้างถนน/ราง BTS | คลิกขวาหมุน | เมาส์กลางเลื่อนจอ</p>
+      </div>
+      <div id="city-alert-banner" class="alert-ok">✓ ระบบราง BTS ถนนหลายเลน และเขื่อนไฟฟ้าทำงานปกติ</div>
     </section>
 
-    <aside class="right-dock">
-      <section class="panel-section">
-        <h2>Tile Inspector</h2>
-        <div id="inspector-box" class="inspector-box">
-          <p>Hover or click any plot on the 16x16 grid to inspect road access, utilities, pollution, and citizen happiness.</p>
-        </div>
-      </section>
+    <div class="bottom-dock-wrap">
+      <div id="subtool-tray" class="subtool-tray interactive"></div>
 
-      <section class="panel-section">
-        <h2>City Diagnostics</h2>
-        <ul id="alerts-list" class="alerts-list">
-          <li>All municipal systems nominal.</li>
-        </ul>
-      </section>
-    </aside>
-  </main>
+      <nav class="hud-bottom interactive">
+        <div class="rci-mini" title="ความต้องการ R / C / I">
+          <div class="rci-col"><div class="rci-vtrack"><div id="bar-r" class="rci-vfill r"></div></div><span>R</span></div>
+          <div class="rci-col"><div class="rci-vtrack"><div id="bar-c" class="rci-vfill c"></div></div><span>C</span></div>
+          <div class="rci-col"><div class="rci-vtrack"><div id="bar-i" class="rci-vfill i"></div></div><span>I</span></div>
+        </div>
+
+        <div class="dock-buttons">
+          <button type="button" class="cat-btn active" data-cat="ROADS">🛣️ ถนน 2–10 เลน</button>
+          <button type="button" class="cat-btn" data-cat="RAIL">🚆 ระบบราง &amp; BTS</button>
+          <button type="button" class="cat-btn" data-cat="ZONES">🏘️ โซน &amp; ห้าง</button>
+          <button type="button" class="cat-btn" data-cat="SPORTS">🏟️ กีฬา &amp; สวน</button>
+          <button type="button" class="cat-btn" data-cat="UTILITY">⚡ เขื่อน &amp; น้ำ-ไฟ</button>
+          <button type="button" class="cat-btn" data-cat="CIVIC">🏛️ บริการรัฐ</button>
+          <span class="dock-sep"></span>
+          <button type="button" id="btn-bulldoze" class="cat-btn danger">🚜 รื้อถอน</button>
+          <button type="button" id="btn-inspect" class="cat-btn">🔍 ตรวจแปลง</button>
+          <span class="dock-sep"></span>
+          <button type="button" id="btn-maps" class="cat-btn accent-outline">🌍 แผนที่</button>
+          <button type="button" id="btn-policies" class="cat-btn">📜 นโยบาย</button>
+          <button type="button" id="btn-infoview" class="cat-btn">🗺️ Info Views</button>
+        </div>
+      </nav>
+    </div>
+
+    <div id="toast-pill" class="toast-pill">พร้อมสร้างมหานคร V4 — เลือกถนน 2–10 เลน, ราง BTS, เขื่อนไฟฟ้า, ห้าง หรือสนามฟุตบอลได้เลย!</div>
+  </div>
 
   <script type="module" src="./src/main.js"></script>
 </body>
