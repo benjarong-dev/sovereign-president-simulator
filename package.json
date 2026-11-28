@@ -1,0 +1,13 @@
+{
+  "name": "sovereign-president-simulator",
+  "version": "2.0.0",
+  "description": "Interactive 3D/2D spatial city builder and macroeconomic policy simulator built with ES Modules and Three.js.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
